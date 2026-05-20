@@ -55,6 +55,7 @@ class DistributionFiles:
         {'path': '/etc/altlinux-release', 'name': 'Altlinux'},
         {'path': '/etc/oracle-release', 'name': 'OracleLinux'},
         {'path': '/etc/slackware-version', 'name': 'Slackware'},
+        {'path': '/etc/os-release', 'name': 'RLC'},
         {'path': '/etc/centos-release', 'name': 'CentOS'},
         {'path': '/etc/redhat-release', 'name': 'RedHat'},
         {'path': '/etc/vmware-release', 'name': 'VMwareESX', 'allowempty': True},
@@ -206,6 +207,60 @@ class DistributionFiles:
                 break
 
         return dist_file_facts
+
+    def parse_distribution_file_RLC(self, name, data, path, collected_facts):
+        rlc_facts = {}
+
+        cpe_match = re.search(r'^CPE_NAME="?([^"\n]*)"?', data, re.MULTILINE)
+        if not cpe_match:
+            return False, rlc_facts
+
+        cpe_name = cpe_match.group(1)
+
+        # CPE 2.3: cpe:2.3:o:vendor:product:version[:...]
+        # CPE 2.2: cpe:/o:vendor:product:version[:...]
+        vendor = None
+        product = None
+        version = None
+
+        if cpe_name.startswith('cpe:2.3:'):
+            parts = cpe_name.split(':')
+            if len(parts) >= 6:
+                vendor = parts[3]
+                product = parts[4]
+                version = parts[5]
+        elif cpe_name.startswith('cpe:/'):
+            parts = cpe_name.replace('cpe:/', '').split(':')
+            if len(parts) >= 3:
+                vendor = parts[1]
+                product = parts[2]
+                version = parts[3] if len(parts) > 3 else None
+
+        if vendor != 'ciq':
+            return False, rlc_facts
+
+        rlc_facts['distribution'] = 'Rocky Linux from CIQ'
+
+        if version:
+            rlc_facts['distribution_version'] = version
+            version_parts = version.split('.')
+            rlc_facts['distribution_major_version'] = version_parts[0]
+            if len(version_parts) > 1:
+                rlc_facts['distribution_minor_version'] = version_parts[1]
+
+        variant_match = re.search(r'^VARIANT_ID="?([^"\n]*)"?', data, re.MULTILINE)
+        if variant_match:
+            rlc_facts['distribution_variant'] = variant_match.group(1)
+        elif product:
+            prefix = 'rocky_linux_from_ciq'
+            if product.startswith(prefix) and len(product) > len(prefix) + 1:
+                rlc_facts['distribution_variant'] = product[len(prefix) + 1:]
+
+        release_match = re.search(r'^VERSION="?[^(]*\(([^)]+)\)"?', data, re.MULTILINE)
+        if release_match:
+            rlc_facts['distribution_release'] = release_match.group(1)
+
+        return True, rlc_facts
 
     # FIXME: split distro file parsing into its own module or class
     def parse_distribution_file_Slackware(self, name, data, path, collected_facts):
@@ -528,7 +583,8 @@ class Distribution(object):
                                 'Ascendos', 'CloudLinux', 'PSBM', 'OracleLinux', 'OVS',
                                 'OEL', 'Amazon', 'Amzn', 'Virtuozzo', 'XenServer', 'Alibaba',
                                 'EulerOS', 'openEuler', 'AlmaLinux', 'Rocky', 'TencentOS',
-                                'EuroLinux', 'Kylin Linux Advanced Server', 'MIRACLE'],
+                                'EuroLinux', 'Kylin Linux Advanced Server', 'MIRACLE',
+                                'Rocky Linux from CIQ'],
                      'Debian': ['Debian', 'Ubuntu', 'Raspbian', 'Neon', 'KDE neon',
                                 'Linux Mint', 'SteamOS', 'Devuan', 'Kali', 'Cumulus Linux',
                                 'Pop!_OS', 'Parrot', 'Pardus GNU/Linux', 'Uos', 'Deepin', 'OSMC',
@@ -728,6 +784,7 @@ class DistributionFactCollector(BaseFactCollector):
     _fact_ids = set(['distribution_version',
                      'distribution_release',
                      'distribution_major_version',
+                     'distribution_variant',
                      'os_family'])  # type: t.Set[str]
 
     def collect(self, module=None, collected_facts=None):
